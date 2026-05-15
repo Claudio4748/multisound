@@ -1,0 +1,28 @@
+{
+  "name": "multi-sound",
+  "version": "0.1.0",
+  "description": "Multi-output audio manager (Electron POC)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "package": "electron-packager . MultiSound --platform=win32 --arch=x64 --out=dist --overwrite",
+    "dist": "electron-builder --win --x64",
+    "web": "npx http-server ./renderer -p 8080 --cors"
+  },
+  "devDependencies": {
+    "electron": "^25.0.0",
+    "electron-packager": "^17.1.0",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.example.multisound",
+    "files": [
+      "**/*"
+    ],
+    "win": {
+      "target": ["nsis"]
+    }
+  },
+  "author": "",
+  "license": "MIT"
+}
