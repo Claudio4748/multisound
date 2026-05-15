@@ -17,19 +17,6 @@ This is a standalone **HTML/JS/CSS** version of the Multi Sound application, con
 ✅ Volume control per device
 ✅ Device enumeration and audio routing
 
-## What Changed from Electron Version
-
-### Removed
-- Electron IPC calls (`window.api.chooseFiles`, `window.api.chooseFolder`)
-- Electron main process (no longer needed)
-- `preload.js` (no longer needed)
-- yt-dlp integration (command-line tool not available in browser)
-
-### Added/Modified
-- HTML5 file input elements (`<input type="file">`) for file selection
-- WebKit directory picker for folder selection
-- Enhanced CSP (Content Security Policy) for YouTube and HLS.js
-
 ## How to Use
 
 ### Option 1: Local Web Server (Recommended)
