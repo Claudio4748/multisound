@@ -1,120 +1,55 @@
-# Multi Sound - Web Version
+## Multi Sound - Versione Web
 
-This is a standalone **HTML/JS/CSS** version of the Multi Sound application, converted from the Electron desktop version.
+Questa è una versione standalone in **HTML/JS/CSS** dell'applicazione Multi Sound, convertita dalla versione desktop Electron.
 
-## What's Included
+## Contenuto
 
-- **index.html** - Web page with audio device interface
-- **renderer.js** - Main application logic (web-compatible)
-- **styles.css** - Styling (identical to original)
+- **index.html** - Pagina web con interfaccia dispositivi audio
+- **renderer.js** - Logica principale dell'applicazione (compatibile web)
+- **styles.css** - Stili grafici (identici all'originale)
 
-## Key Features
+## Funzionalità Principali
 
-✅ Multi-output audio device selection
-✅ Local audio file playback
-✅ YouTube URL embedding  
-✅ HLS streaming support
-✅ Volume control per device
-✅ Device enumeration and audio routing
+✅ Selezione dispositivi audio multi-output  
+✅ Riproduzione file audio locali  
+✅ Supporto streaming HLS  
+✅ Controllo volume per dispositivo  
+✅ Enumerazione dispositivi e routing audio  
 
-## How to Use
+### Opzione 1: Apertura Diretta File
+Apri semplicemente `index.html` nel browser. Tuttavia, la selezione file potrebbe essere limitata a causa delle restrizioni di sicurezza del browser.
 
-### Option 1: Local Web Server (Recommended)
-```bash
-# Using Python 3
-python -m http.server 8000
+### Opzione 2: Versione Web
+Vai su multisound.edgeone.app
 
-# Using Node.js (npx)
-npx http-server . -p 8000 --cors
+## Requisiti Browser
 
-# Using Node.js (if http-server installed)
-http-server . -p 8000 --cors
-```
+- **Browser Chromium moderno** (Chrome, Edge, Brave, ecc.)
+- Supporto enumerazione dispositivi audio
+- Web Audio API con `setSinkId()` per output multi-dispositivo
 
-Then open: **http://localhost:8000**
+### Limitazioni Note
 
-### Option 2: Direct File Opening
-Simply open `index.html` in your browser. However, file selection may be limited due to browser security restrictions.
+- **Firefox**: Supporto limitato a `setSinkId()` (il routing multi-dispositivo potrebbe non funzionare)
+- **Safari**: Supporto limitato per la selezione output audio
+- **YouTube**: Il routing audio YouTube verso dispositivi specifici potrebbe non funzionare (limitazione browser)
+- **Nessun yt-dlp**: Impossibile estrarre URL audio diretti da YouTube (usa la riproduzione integrata del browser)
 
-## Browser Requirements
+## Funzionalità Supportate
 
-- **Modern Chromium browser** (Chrome, Edge, Brave, etc.)
-- Audio device enumeration support
-- Web Audio API with `setSinkId()` for multi-device output
+✅ Selezione e riproduzione file locali  
+✅ Navigazione cartelle audio  
+✅ Controllo volume per dispositivo  
+✅ Richiesta permessi dispositivi  
+✅ Embed YouTube (con fallback)  
+✅ Streaming HLS (tramite libreria Hls.js)  
+✅ Diagnostica file audio (pulsante Debug)  
 
-### Known Limitations
+## Struttura
 
-- **Firefox**: Limited `setSinkId()` support (multi-device routing may not work)
-- **Safari**: Limited audio output selection support
-- **YouTube**: Routing YouTube audio to specific devices may not work (browser limitation)
-- **No yt-dlp**: Cannot extract direct audio URLs from YouTube (use browser's built-in playback instead)
-
-## Features That Work
-
-✅ Local file selection and playback
-✅ Folder browsing for audio files
-✅ Per-device volume control
-✅ Device permission requests
-✅ YouTube embed (with fallback)
-✅ HLS streaming (with Hls.js library)
-✅ Audio file diagnostics (Debug button)
-
-## Structure
-
-```
+ ```txt
 web-version/
-├── index.html      # Main HTML file with UI structure
-├── renderer.js     # Application logic
-├── styles.css      # Design and layout
-└── README.md       # This file
-```
-
-## File Size
-
-The entire web version is lightweight:
-- HTML: ~5 KB
-- JS: ~45 KB
-- CSS: ~2 KB
-
-## YouTube Integration
-
-YouTube links can be embedded as iframes. The app attempts to load the YouTube IFrame API for better control, with graceful fallback to simple iframe embedding.
-
-## Troubleshooting
-
-### "getUserMedia" errors
-- Grant microphone permission when prompted
-- Some browsers require HTTPS for getUserMedia
-- Check browser console for details
-
-### Audio not playing
-- Ensure files are in supported formats (MP3, WAV, OGG, M4A)
-- Check the Debug button for CORS/network issues
-- Verify device is not muted
-
-### Device list empty
-- Grant microphone permission
-- Click "Abilita dispositivi" button
-- Some browsers may need HTTPS
-
-## Technical Notes
-
-The web version uses:
-- **Web Audio API** for audio context management
-- **MediaDevices API** for device enumeration and routing
-- **File API** for local file handling
-- **Fetch API** for stream loading and debugging
-- **YouTube IFrame API** for video embedding
-- **Hls.js** for HLS stream support
-
-## Original Electron Project
-
-This web version is based on the Electron application. To use the desktop version, refer to the parent directory `package.json` and run:
-```bash
-npm install
-npm start
-```
-
----
-
-**Last Updated**: 2026-02-17
+├── index.html      # File HTML principale con struttura UI
+├── renderer.js     # Logica applicazione
+├── styles.css      # Design e layout
+└── README.md       # Questo file
