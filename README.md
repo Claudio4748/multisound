@@ -6,7 +6,7 @@ Questa è una versione standalone in **HTML/JS/CSS** dell'applicazione Multi Sou
 
 - **index.html** - Pagina web con interfaccia dispositivi audio
 - **renderer.js** - Logica principale dell'applicazione (compatibile web)
-- **styles.css** - Stili grafici (identici all'originale)
+- **styles.css**
 
 ## Funzionalità Principali
 
