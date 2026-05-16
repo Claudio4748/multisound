@@ -5,9 +5,7 @@ const enableBtn = document.getElementById('enableDevices')
 
 let devicePlayers = {}
 
-
-const isElectron = !!window.api && typeof window.api.chooseFiles === 'function'
-
+// Simplified: always use web fallbacks (no Electron check needed)
 // shared AudioContext to satisfy autoplay policies; resumed on first user gesture
 const AudioCtx = window.AudioContext || window.webkitAudioContext
 let audioCtx = AudioCtx ? new AudioCtx() : null
@@ -29,6 +27,23 @@ async function enumerateOutputs() {
   return Array.from(seen.values())
 }
 
+async function enumerateInputs() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+    console.warn('Enumerazione dispositivi input non supportata.')
+    return []
+  }
+  const devices = await navigator.mediaDevices.enumerateDevices()
+  const inputs = devices.filter(d => d.kind === 'audioinput')
+
+  // Deduplicate by groupId (preferred), then deviceId, then label
+  const seen = new Map()
+  inputs.forEach(d => {
+    const key = d.groupId || d.deviceId || d.label || d.kind
+    if (!seen.has(key)) seen.set(key, d)
+  })
+  return Array.from(seen.values())
+}
+
 async function requestDevicePermissions() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     alert('getUserMedia non supportato dal browser.')
@@ -43,6 +58,223 @@ async function requestDevicePermissions() {
   } catch (e) {
     console.warn('Permesso dispositivi negato', e)
     return false
+  }
+}
+
+async function setupLoopback(player, source, outputDeviceId, cardEl) {
+  const statusEl = cardEl.querySelector('.status')
+  
+  // Stop any existing loopback
+  if (player.inputStream) {
+    player.inputStream.getTracks().forEach(t => t.stop())
+    player.inputStream = null
+  }
+  if (player.inputSource) {
+    try { player.inputSource.disconnect() } catch(e){}
+    player.inputSource = null
+  }
+  if (player.loopbackGain) {
+    try { player.loopbackGain.disconnect() } catch(e){}
+    player.loopbackGain = null
+  }
+  if (player.loopbackDestination) {
+    try { player.loopbackDestination.disconnect() } catch(e){}
+    player.loopbackDestination = null
+  }
+  if (player.loopbackAudio) {
+    try { player.loopbackAudio.pause() } catch(e){}
+    player.loopbackAudio = null
+  }
+  if (player.sourceAudio) {
+    try { player.sourceAudio.pause() } catch(e){}
+    player.sourceAudio = null
+  }
+  
+  if (!source || !outputDeviceId || outputDeviceId === 'none') {
+    statusEl.textContent = 'Loopback disabilitato'
+    return
+  }
+
+  try {
+    statusEl.textContent = 'Configurazione loopback audio...'
+    
+    // Resume AudioContext if suspended
+    if (audioCtx && audioCtx.state === 'suspended') {
+      await audioCtx.resume()
+    }
+    
+    let sourceLabel = ''
+    
+    // Handle input source (microphone)
+    if (source.type === 'input') {
+      try {
+        const constraints = {
+          audio: {
+            deviceId: { exact: source.deviceId }
+          }
+        }
+        const stream = await navigator.mediaDevices.getUserMedia(constraints)
+        player.inputStream = stream
+        sourceLabel = stream.getTracks()[0].label || 'Microfono'
+        
+        // Create media source from stream
+        player.inputSource = audioCtx.createMediaStreamAudioSource(stream)
+      } catch (e) {
+        console.warn('Failed to get input stream', e)
+        statusEl.textContent = 'Errore: accesso negato al microfono'
+        return
+      }
+    } else if (source.type === 'output') {
+      // Handle output source: capture system audio via getDisplayMedia
+      try {
+        const mediaStream = await navigator.mediaDevices.getDisplayMedia({
+          video: false,
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        })
+        player.inputStream = mediaStream
+        sourceLabel = mediaStream.getAudioTracks()[0].label || 'Audio di sistema'
+        
+        // Create media source from system audio stream
+        player.inputSource = audioCtx.createMediaStreamAudioSource(mediaStream)
+      } catch (e) {
+        console.warn('Failed to capture system audio', e)
+        statusEl.textContent = 'Errore: impossibile catturare audio di sistema'
+        return
+      }
+    }
+    
+    // Create gain node for loopback
+    player.loopbackGain = audioCtx.createGain()
+    player.loopbackGain.gain.value = 1
+    
+    // Create MediaStreamAudioDestinationNode to capture the routed audio
+    player.loopbackDestination = audioCtx.createMediaStreamDestination()
+    
+    // Connect: inputSource → gain → destination
+    player.inputSource.connect(player.loopbackGain)
+    player.loopbackGain.connect(player.loopbackDestination)
+    
+    // Create audio element to route to output device
+    player.loopbackAudio = new Audio()
+    player.loopbackAudio.srcObject = player.loopbackDestination.stream
+    
+    // Set sink ID to route to selected output device
+    if (player.loopbackAudio.setSinkId) {
+      try {
+        await player.loopbackAudio.setSinkId(outputDeviceId)
+      } catch(e) {
+        console.warn('setSinkId failed for loopback destination', e)
+      }
+    }
+    
+    // Start playing to activate the audio routing
+    player.loopbackAudio.play().catch(err => {
+      console.warn('Loopback audio play failed', err)
+    })
+    
+    // Update status
+    const outputs = await enumerateOutputs()
+    const targetOutput = outputs.find(o => o.deviceId === outputDeviceId)
+    const outputName = targetOutput ? targetOutput.label : outputDeviceId
+    statusEl.textContent = `Loopback: ${sourceLabel} → ${outputName}`
+  } catch (e) {
+    console.warn('Loopback setup failed', e)
+    statusEl.textContent = 'Errore: ' + e.message
+  }
+}
+
+async function setupOutputLoopback(player, inputDeviceId, outputDeviceId, cardEl) {
+  const statusEl = cardEl.querySelector('.status')
+  
+  // Stop any existing loopback
+  if (player.inputStream) {
+    player.inputStream.getTracks().forEach(t => t.stop())
+    player.inputStream = null
+  }
+  if (player.inputSource) {
+    try { player.inputSource.disconnect() } catch(e){}
+    player.inputSource = null
+  }
+  if (player.loopbackGain) {
+    try { player.loopbackGain.disconnect() } catch(e){}
+    player.loopbackGain = null
+  }
+  if (player.loopbackDestination) {
+    try { player.loopbackDestination.disconnect() } catch(e){}
+    player.loopbackDestination = null
+  }
+  if (player.loopbackAudio) {
+    try { player.loopbackAudio.pause() } catch(e){}
+    player.loopbackAudio = null
+  }
+  
+  if (!inputDeviceId || inputDeviceId === 'none' || !outputDeviceId || outputDeviceId === 'none') {
+    statusEl.textContent = 'Loopback disabilitato'
+    return
+  }
+
+  try {
+    statusEl.textContent = 'Configurazione loopback audio...'
+    
+    // Resume AudioContext if suspended
+    if (audioCtx && audioCtx.state === 'suspended') {
+      await audioCtx.resume()
+    }
+    
+    // Request audio from input device
+    const constraints = {
+      audio: {
+        deviceId: { exact: inputDeviceId }
+      }
+    }
+    const stream = await navigator.mediaDevices.getUserMedia(constraints)
+    player.inputStream = stream
+    
+    // Create media source from stream
+    player.inputSource = audioCtx.createMediaStreamAudioSource(stream)
+    
+    // Create gain node for loopback
+    player.loopbackGain = audioCtx.createGain()
+    player.loopbackGain.gain.value = 1
+    
+    // Create MediaStreamAudioDestinationNode to capture the routed audio
+    player.loopbackDestination = audioCtx.createMediaStreamDestination()
+    
+    // Connect: inputSource → gain → destination
+    player.inputSource.connect(player.loopbackGain)
+    player.loopbackGain.connect(player.loopbackDestination)
+    
+    // Create audio element to route to output device
+    player.loopbackAudio = new Audio()
+    player.loopbackAudio.srcObject = player.loopbackDestination.stream
+    
+    // Set sink ID to route to selected output device
+    if (player.loopbackAudio.setSinkId) {
+      try {
+        await player.loopbackAudio.setSinkId(outputDeviceId)
+      } catch(e) {
+        console.warn('setSinkId failed for loopback', e)
+      }
+    }
+    
+    // Start playing to activate the audio routing
+    player.loopbackAudio.play().catch(err => {
+      console.warn('Loopback audio play failed', err)
+    })
+    
+    // Update status
+    const outputs = await enumerateOutputs()
+    const targetOutput = outputs.find(o => o.deviceId === outputDeviceId)
+    const outputName = targetOutput ? targetOutput.label : outputDeviceId
+    const inputLabel = stream.getTracks()[0].label
+    statusEl.textContent = `Loopback: ${inputLabel} → ${outputName}`
+  } catch (e) {
+    console.warn('Output loopback setup failed', e)
+    statusEl.textContent = 'Errore loopback: ' + e.message
   }
 }
 
@@ -79,6 +311,52 @@ function createDeviceCard(device) {
   statusEl.className = 'status'
   statusEl.textContent = 'Idle'
   el.appendChild(statusEl)
+
+  // LOOPBACK SECTION
+  const loopbackSection = document.createElement('div')
+  loopbackSection.className = 'loopback-section'
+  loopbackSection.style.marginTop = '12px'
+  loopbackSection.style.padding = '10px'
+  loopbackSection.style.backgroundColor = 'rgba(200, 150, 100, 0.1)'
+  loopbackSection.style.borderRadius = '6px'
+  
+  const loopbackLabel = document.createElement('label')
+  loopbackLabel.style.display = 'block'
+  loopbackLabel.style.marginBottom = '8px'
+  loopbackLabel.style.fontSize = '13px'
+  loopbackLabel.style.fontWeight = 'bold'
+  loopbackLabel.textContent = '🔀 Loopback:'
+  
+  // Loopback source selector (unified)
+  const loopbackSourceRow = document.createElement('div')
+  
+  const loopbackSourceLabel = document.createElement('label')
+  loopbackSourceLabel.style.display = 'block'
+  loopbackSourceLabel.style.fontSize = '12px'
+  loopbackSourceLabel.style.marginBottom = '4px'
+  loopbackSourceLabel.style.color = 'rgba(224,255,232,0.7)'
+  loopbackSourceLabel.textContent = 'Scegli fonte (Microfoni / Altoparlanti):'
+  
+  const loopbackSourceSelect = document.createElement('select')
+  loopbackSourceSelect.className = 'loopback-source-select'
+  loopbackSourceSelect.style.width = '100%'
+  loopbackSourceSelect.style.padding = '6px'
+  loopbackSourceSelect.style.borderRadius = '4px'
+  loopbackSourceSelect.style.border = '1px solid rgba(200,200,200,0.3)'
+  loopbackSourceSelect.style.backgroundColor = 'rgba(20,20,30,0.8)'
+  loopbackSourceSelect.style.color = '#e0ffe8'
+  
+  const optionNone = document.createElement('option')
+  optionNone.value = 'none'
+  optionNone.textContent = '-- Disabilitato --'
+  loopbackSourceSelect.appendChild(optionNone)
+  
+  loopbackSourceRow.appendChild(loopbackSourceLabel)
+  loopbackSourceRow.appendChild(loopbackSourceSelect)
+  
+  loopbackSection.appendChild(loopbackLabel)
+  loopbackSection.appendChild(loopbackSourceRow)
+  el.appendChild(loopbackSection)
 
   // add icons and titles to buttons for clarity
   chooseFilesBtn.innerHTML = '<span class="btn-icon">📁</span><span class="label">Scegli file</span>'
@@ -117,10 +395,59 @@ function createDeviceCard(device) {
     groupId: device.groupId,
     audio,
     playlist: [],
-    index: 0
+    index: 0,
+    inputStream: null,
+    inputSource: null,
+    loopbackGain: null,
+    loopbackDestination: null,
+    loopbackAudio: null
   }
 
-  // attempt to set sinkId (works in Chromium-based browsers/Electron when supported)
+  // Populate loopback source dropdown with input and output devices
+  Promise.all([enumerateInputs(), enumerateOutputs()]).then(([inputs, outputs]) => {
+    loopbackSourceSelect.innerHTML = ''
+    const optionNone = document.createElement('option')
+    optionNone.value = 'none'
+    optionNone.textContent = '-- Disabilitato --'
+    loopbackSourceSelect.appendChild(optionNone)
+    
+    // Add inputs (microfoni)
+    if (inputs && inputs.length > 0) {
+      inputs.forEach(input => {
+        const option = document.createElement('option')
+        option.value = 'input:' + input.deviceId
+        option.textContent = input.label || `Input (${input.deviceId.slice(0, 8)})`
+        loopbackSourceSelect.appendChild(option)
+      })
+    }
+    
+    // Add outputs (altoparlanti)
+    if (outputs && outputs.length > 0) {
+      outputs.forEach(output => {
+        const option = document.createElement('option')
+        option.value = 'output:' + output.deviceId
+        option.textContent = output.label || `Output (${output.deviceId.slice(0, 8)})`
+        loopbackSourceSelect.appendChild(option)
+      })
+    }
+  }).catch(err => {
+    console.warn('Could not enumerate devices for loopback', err)
+  })
+
+  // Handle loopback source selection
+  loopbackSourceSelect.addEventListener('change', async (e) => {
+    const selectedValue = e.target.value
+    if (selectedValue === 'none') {
+      await setupLoopback(player, null, device.deviceId, el)
+      return
+    }
+    
+    // Parse source format: 'input:deviceId' or 'output:deviceId'
+    const [sourceType, sourceDeviceId] = selectedValue.split(':')
+    await setupLoopback(player, { type: sourceType, deviceId: sourceDeviceId }, device.deviceId, el)
+  })
+
+  // attempt to set sinkId (works in Chromium-based browsers when supported)
   if (audio.setSinkId && player.deviceId) {
     audio.setSinkId(player.deviceId).catch(err => {
       console.warn('setSinkId failed', err)
@@ -138,23 +465,13 @@ function createDeviceCard(device) {
   })
 
   chooseFilesBtn.addEventListener('click', async () => {
-    if (isElectron) {
-      const files = await window.api.chooseFiles()
-      if (files && files.length) addFilesToPlaylist(player, files, playlistEl)
-    } else {
-      const files = await chooseFilesWeb()
-      if (files && files.length) addFilesToPlaylist(player, files, playlistEl)
-    }
+    const files = await chooseFilesWeb()
+    if (files && files.length) addFilesToPlaylist(player, files, playlistEl)
   })
 
   chooseFolderBtn.addEventListener('click', async () => {
-    if (isElectron) {
-      const files = await window.api.chooseFolder()
-      if (files && files.length) addFilesToPlaylist(player, files, playlistEl)
-    } else {
-      const files = await chooseFolderWeb()
-      if (files && files.length) addFilesToPlaylist(player, files, playlistEl)
-    }
+    const files = await chooseFolderWeb()
+    if (files && files.length) addFilesToPlaylist(player, files, playlistEl)
   })
 
   // reset button: clear playlist, revoke object URLs, stop audio
@@ -178,28 +495,49 @@ function createDeviceCard(device) {
       const ytCont = el.querySelector('.yt-container')
       if (ytCont) ytCont.remove()
     }
+    // stop input routing
+    if (player.inputStream) {
+      player.inputStream.getTracks().forEach(t => t.stop())
+      player.inputStream = null
+    }
+    if (player.inputSource) {
+      try { player.inputSource.disconnect() } catch(e){}
+      player.inputSource = null
+    }
+    if (player.routingGain) {
+      try { player.routingGain.disconnect() } catch(e){}
+      player.routingGain = null
+    }
+    // stop loopback
+    if (player.inputStream) {
+      player.inputStream.getTracks().forEach(t => t.stop())
+      player.inputStream = null
+    }
+    if (player.inputSource) {
+      try { player.inputSource.disconnect() } catch(e){}
+      player.inputSource = null
+    }
+    if (player.loopbackGain) {
+      try { player.loopbackGain.disconnect() } catch(e){}
+      player.loopbackGain = null
+    }
+    if (player.loopbackDestination) {
+      try { player.loopbackDestination.disconnect() } catch(e){}
+      player.loopbackDestination = null
+    }
+    if (player.loopbackAudio) {
+      try { player.loopbackAudio.pause() } catch(e){}
+      player.loopbackAudio = null
+    }
     player.playlist = []
     player.index = 0
     try { audio.removeAttribute('src'); audio.load() } catch(e){}
     // clear UI
     playlistEl.innerHTML = ''
+    loopbackSourceSelect.value = 'none'
     statusEl.textContent = 'Reset'
   })
   el.querySelector('.controls').appendChild(resetBtn)
-
-  // debug button
-  const debugBtn = document.createElement('button')
-  debugBtn.className = 'secondary'
-  debugBtn.textContent = 'Debug'
-  debugBtn.title = 'Esegue controlli di reachability/CORS per la sorgente corrente'
-  debugBtn.style.marginLeft = '6px'
-  debugBtn.addEventListener('click', async () => {
-    const current = player.playlist[player.index]
-    await debugSource(current, player, el)
-  })
-  el.querySelector('.controls').appendChild(debugBtn)
-
-
 
   playBtn.addEventListener('click', async (ev) => {
     // resume shared AudioContext if present
@@ -411,43 +749,6 @@ async function handleUrlForPlayer(player, url, playlistEl, cardEl) {
   url = (url || '').trim()
   // If it's a YouTube URL, embed the video using YouTube IFrame API
 
-  async function debugSource(item, player, cardEl) {
-    const statusEl = cardEl.querySelector('.status')
-    if (!item || !item.src) {
-      statusEl.textContent = 'Nessuna sorgente da debug'
-      return
-    }
-    const src = item.src
-    statusEl.textContent = 'Debug: testing URL...'
-    console.group('Debug source')
-    console.log('src:', src)
-    try {
-      // Try a CORS GET to inspect headers (may fail due to CORS)
-      const controller = new AbortController()
-      const to = setTimeout(() => controller.abort(), 8000)
-      const resp = await fetch(src, { method: 'GET', mode: 'cors', signal: controller.signal })
-      clearTimeout(to)
-      console.log('fetch ok:', resp.status, resp.statusText)
-      console.log('content-type:', resp.headers.get('content-type'))
-      console.log('content-length:', resp.headers.get('content-length'))
-      statusEl.textContent = `Debug: reachable (${resp.status}) ${resp.headers.get('content-type') || ''}`
-      // if HLS manifest, show first line
-      const ct = resp.headers.get('content-type') || ''
-      if (/application\/vnd\.apple\.mpegurl|application\/x-mpegURL|vnd\.apple\.mpegurl|mpegurl|application\/octet-stream/i.test(ct) || src.endsWith('.m3u8')) {
-        const text = await resp.text()
-        console.log('manifest preview:\n', text.split('\n').slice(0,20).join('\n'))
-      }
-    } catch (e) {
-      console.warn('fetch failed or CORS blocked', e)
-      statusEl.textContent = 'Debug: fetch failed (CORS or network) – vedi Console'
-    }
-    // If this is a YouTube embed in card, check iframe load
-    const ytCont = cardEl.querySelector('.yt-container, .yt-embed')
-    if (ytCont) {
-      console.log('YouTube embed present in card')
-    }
-    console.groupEnd()
-  }
   if (isYouTubeUrl(url)) {
     const id = extractYouTubeId(url)
     if (!id) { alert('YouTube URL non riconosciuto'); return }
@@ -471,124 +772,94 @@ async function handleUrlForPlayer(player, url, playlistEl, cardEl) {
     const statusEl = cardEl.querySelector('.status')
     statusEl.textContent = 'Preparazione YouTube...'
 
-    // If running in Electron and yt-dlp helper is exposed, try extracting a direct audio URL first
-    if (window.yt && typeof window.yt.getAudioUrl === 'function') {
-      statusEl.textContent = 'Estrazione audio via yt-dlp...'
+    // load API and create player
+    // wait for API but with timeout; if API not available fallback to iframe embed
+    try {
+      await Promise.race([
+        loadYouTubeAPI(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('YT API timeout')), 8000))
+      ])
+    } catch (err) {
+      console.warn('YouTube API load failed or timed out', err)
+      // fallback to plain iframe embed
       try {
-        const extracted = await window.yt.getAudioUrl(url)
-        if (extracted && extracted.trim()) {
-          const name = `YouTube-${id}`
-          player.playlist = [{ src: extracted, name, revoke: false }]
-          playlistEl.innerHTML = ''
-          const itemEl = document.createElement('div')
-          itemEl.className = 'file-item'
-          itemEl.textContent = name
-          playlistEl.appendChild(itemEl)
-          if (player.audio) {
-            try { player.audio.pause(); player.audio.removeAttribute('src'); player.audio.load() } catch(e){}
-            player.audio.src = extracted
-            player.audio.load()
-            player.audio.play().catch(e=>console.warn('YouTube extracted play failed', e))
-          }
-          statusEl.textContent = 'Riproduzione audio YouTube (extracted)'
-          return
-        } else {
-          statusEl.textContent = 'Estrazione non ha restituito URL; uso embed'
-        }
+        const iframe = document.createElement('iframe')
+        iframe.className = 'yt-embed'
+        iframe.width = '320'
+        iframe.height = '180'
+        iframe.src = `https://www.youtube.com/embed/${id}?rel=0&autoplay=0&modestbranding=1`
+        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'
+        iframe.style.marginTop = '10px'
+        cardEl.appendChild(iframe)
+        statusEl.textContent = 'Embed YouTube (fallback)'
+        // add open-in-new-tab helper
+        const helper = document.createElement('div')
+        helper.className = 'hint'
+        helper.innerHTML = `Impossibile caricare API; prova ad aprire il video in una nuova scheda.`
+        const openBtn = document.createElement('button')
+        openBtn.className = 'secondary'
+        openBtn.textContent = 'Apri in YouTube'
+        openBtn.style.marginLeft = '8px'
+        openBtn.addEventListener('click', () => { window.open(url, '_blank') })
+        helper.appendChild(openBtn)
+        cardEl.appendChild(helper)
       } catch (e) {
-        console.warn('yt-dlp extraction failed', e)
-        statusEl.textContent = 'Estrazione yt-dlp fallita; uso embed'
+        console.warn('YouTube iframe fallback failed', e)
+        statusEl.textContent = 'Errore embed YouTube'
+        const helper = document.createElement('div')
+        helper.className = 'hint'
+        helper.textContent = 'Errore durante il fallback embed. Controlla la Console per dettagli.'
+        const openBtn = document.createElement('button')
+        openBtn.className = 'secondary'
+        openBtn.textContent = 'Apri in YouTube'
+        openBtn.style.marginLeft = '8px'
+        openBtn.addEventListener('click', () => { window.open(url, '_blank') })
+        helper.appendChild(openBtn)
+        cardEl.appendChild(helper)
       }
+      return
     }
 
-    // load API and create player
-      // wait for API but with timeout; if API not available fallback to iframe embed
-      try {
-        await Promise.race([
-          loadYouTubeAPI(),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('YT API timeout')), 8000))
-        ])
-      } catch (err) {
-        console.warn('YouTube API load failed or timed out', err)
-        // fallback to plain iframe embed
-        try {
-          const iframe = document.createElement('iframe')
-          iframe.className = 'yt-embed'
-          iframe.width = '320'
-          iframe.height = '180'
-          iframe.src = `https://www.youtube.com/embed/${id}?rel=0&autoplay=0&modestbranding=1`
-          iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'
-          iframe.style.marginTop = '10px'
-          cardEl.appendChild(iframe)
-          statusEl.textContent = 'Embed YouTube (fallback)'
-          // add open-in-new-tab helper
-          const helper = document.createElement('div')
-          helper.className = 'hint'
-          helper.innerHTML = `Impossibile caricare API; prova ad aprire il video in una nuova scheda.`
-          const openBtn = document.createElement('button')
-          openBtn.className = 'secondary'
-          openBtn.textContent = 'Apri in YouTube'
-          openBtn.style.marginLeft = '8px'
-          openBtn.addEventListener('click', () => { window.open(url, '_blank') })
-          helper.appendChild(openBtn)
-          cardEl.appendChild(helper)
-        } catch (e) {
-          console.warn('YouTube iframe fallback failed', e)
-          statusEl.textContent = 'Errore embed YouTube'
-          const helper = document.createElement('div')
-          helper.className = 'hint'
-          helper.textContent = 'Errore durante il fallback embed. Controlla la Console per dettagli.'
-          const openBtn = document.createElement('button')
-          openBtn.className = 'secondary'
-          openBtn.textContent = 'Apri in YouTube'
-          openBtn.style.marginLeft = '8px'
-          openBtn.addEventListener('click', () => { window.open(url, '_blank') })
-          helper.appendChild(openBtn)
-          cardEl.appendChild(helper)
-        }
-        return
+    try {
+      if (player.ytPlayer) {
+        try { player.ytPlayer.destroy() } catch(e){}
+        player.ytPlayer = null
       }
-
-      try {
-        if (player.ytPlayer) {
-          try { player.ytPlayer.destroy() } catch(e){}
-          player.ytPlayer = null
-        }
-        if (window.YT && window.YT.Player) {
-          player.ytPlayer = new YT.Player(pid, {
-            height: '180',
-            width: '320',
-            videoId: id,
-            playerVars: { rel: 0, modestbranding: 1 },
-            events: {
-              onReady: (ev) => { statusEl.textContent = 'YouTube pronto' },
-              onStateChange: (ev) => {
-                // map states
-                const s = ev.data
-                if (s === YT.PlayerState.PLAYING) statusEl.textContent = 'Playing (YouTube)'
-                else if (s === YT.PlayerState.PAUSED) statusEl.textContent = 'Paused (YouTube)'
-                else if (s === YT.PlayerState.BUFFERING) statusEl.textContent = 'Buffering...'
-                else if (s === YT.PlayerState.ENDED) statusEl.textContent = 'Ended'
-                else statusEl.textContent = 'YouTube state: ' + s
-              }
+      if (window.YT && window.YT.Player) {
+        player.ytPlayer = new YT.Player(pid, {
+          height: '180',
+          width: '320',
+          videoId: id,
+          playerVars: { rel: 0, modestbranding: 1 },
+          events: {
+            onReady: (ev) => { statusEl.textContent = 'YouTube pronto' },
+            onStateChange: (ev) => {
+              // map states
+              const s = ev.data
+              if (s === YT.PlayerState.PLAYING) statusEl.textContent = 'Playing (YouTube)'
+              else if (s === YT.PlayerState.PAUSED) statusEl.textContent = 'Paused (YouTube)'
+              else if (s === YT.PlayerState.BUFFERING) statusEl.textContent = 'Buffering...'
+              else if (s === YT.PlayerState.ENDED) statusEl.textContent = 'Ended'
+              else statusEl.textContent = 'YouTube state: ' + s
             }
-          })
-        } else {
-          // If YT not available after load, fallback iframe
-          const iframe = document.createElement('iframe')
-          iframe.className = 'yt-embed'
-          iframe.width = '320'
-          iframe.height = '180'
-          iframe.src = `https://www.youtube.com/embed/${id}?rel=0&autoplay=0&modestbranding=1`
-          iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'
-          iframe.style.marginTop = '10px'
-          cardEl.appendChild(iframe)
-          statusEl.textContent = 'Embed YouTube (fallback)'
-        }
-      } catch(e) {
-        console.warn('YT.Player creation failed', e)
-        statusEl.textContent = 'Errore embed YouTube'
+          }
+        })
+      } else {
+        // If YT not available after load, fallback iframe
+        const iframe = document.createElement('iframe')
+        iframe.className = 'yt-embed'
+        iframe.width = '320'
+        iframe.height = '180'
+        iframe.src = `https://www.youtube.com/embed/${id}?rel=0&autoplay=0&modestbranding=1`
+        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'
+        iframe.style.marginTop = '10px'
+        cardEl.appendChild(iframe)
+        statusEl.textContent = 'Embed YouTube (fallback)'
       }
+    } catch(e) {
+      console.warn('YT.Player creation failed', e)
+      statusEl.textContent = 'Errore embed YouTube'
+    }
     return
   }
 
@@ -642,25 +913,10 @@ async function handleUrlForPlayer(player, url, playlistEl, cardEl) {
   }
 }
 
-function toFileUrl(path) {
-  let p = path.replace(/\\/g, '/')
-  // encode spaces and special chars
-  return `file:///` + encodeURI(p)
-}
-
 function addFilesToPlaylist(player, files, playlistEl) {
   files.forEach(f => {
     let item
-    if (typeof f === 'string') {
-      const name = f.split(/[\\/]/).pop()
-      const src = toFileUrl(f)
-      if (!isPlayableByExtension(name)) {
-        alert('Formato non supportato: ' + name)
-        console.warn('Unsupported extension for', name)
-        return
-      }
-      item = { src, name, revoke: false }
-    } else if (f instanceof File) {
+    if (f instanceof File) {
       // for File objects, create object URL and keep original file for fallback
       const url = URL.createObjectURL(f)
       const name = f.name
@@ -696,7 +952,7 @@ function isPlayableFile(file, name) {
   return isPlayableByExtension(name)
 }
 
-// Web fallback: use hidden inputs to let user select files/folders
+// Web file picker: use hidden inputs to let user select files/folders
 function chooseFilesWeb() {
   return new Promise(resolve => {
     const input = document.getElementById('filePicker')
@@ -773,5 +1029,3 @@ navigator.permissions && navigator.permissions.query && navigator.permissions.qu
 }).catch(()=>{})
 
 refresh()
-
-
