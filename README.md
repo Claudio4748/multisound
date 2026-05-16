@@ -32,8 +32,6 @@ Vai su multisound.edgeone.app
 
 - **Firefox**: Supporto limitato a `setSinkId()` (il routing multi-dispositivo potrebbe non funzionare)
 - **Safari**: Supporto limitato per la selezione output audio
-- **YouTube**: Il routing audio YouTube verso dispositivi specifici potrebbe non funzionare (limitazione browser)
-- **Nessun yt-dlp**: Impossibile estrarre URL audio diretti da YouTube (usa la riproduzione integrata del browser)
 
 ## Funzionalità Supportate
 
