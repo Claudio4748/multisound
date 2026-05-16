@@ -10,11 +10,11 @@ Questa è una versione standalone in **HTML/JS/CSS** dell'applicazione Multi Sou
 
 ## Funzionalità Principali
 
-✅ Selezione dispositivi audio multi-output  
-✅ Riproduzione file audio locali  
-✅ Supporto streaming HLS  
-✅ Controllo volume per dispositivo  
-✅ Enumerazione dispositivi e routing audio  
+• Selezione dispositivi audio multi-output  
+• Riproduzione file audio locali  
+• Supporto streaming HLS  
+• Controllo volume per dispositivo  
+• Enumerazione dispositivi e routing audio  
 
 ### Opzione 1: Apertura Diretta File
 Apri semplicemente `index.html` nel browser. Tuttavia, la selezione file potrebbe essere limitata a causa delle restrizioni di sicurezza del browser.
@@ -37,13 +37,10 @@ Vai su multisound.edgeone.app
 
 ## Funzionalità Supportate
 
-✅ Selezione e riproduzione file locali  
-✅ Navigazione cartelle audio  
-✅ Controllo volume per dispositivo  
-✅ Richiesta permessi dispositivi  
-✅ Embed YouTube (con fallback)  
-✅ Streaming HLS (tramite libreria Hls.js)  
-✅ Diagnostica file audio (pulsante Debug)  
+• Selezione e riproduzione file locali  
+• Navigazione cartelle audio  
+• Controllo volume per dispositivo  
+• Richiesta permessi dispositivi  
 
 ## Struttura
 
